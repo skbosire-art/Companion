@@ -36,8 +36,30 @@ import {
   startPointAsk,
   usePointAskSession,
 } from "./point-ask-session"
+import { SAMPLE_STAMPS, stampedSkillIds } from "./sample-stamps"
+import {
+  bigPictureFor,
+  cardReadAloud,
+  CLOSING,
+  DEMO_PINNED_GOAL,
+  IF_INTERESTED,
+  NOTICED,
+  stampsAddUpTo,
+  YOUR_CHOICE,
+} from "./big-picture"
+import type { BigPicture } from "./big-picture"
+import {
+  clearPracticeFromGoal,
+  endVisit,
+  getBigPictureChoices,
+  openGoal,
+  practiceFromGoal,
+  restForThisVisit,
+  sayNotNow,
+  useBigPictureChoices,
+} from "./big-picture-choices"
 
-type Page = "home" | "point" | "passport" | "people" | "guidance" | "logging" | "celebration" | "scan" | "identify" | "cafesteps" | "cafecomplete" | "summary" | "summary-editor" | "summary-sharing" | "summary-shares" | "supporters" | "add-supporter" | "cheer-detail" | "confirmer" | "credential" | "credential-export" | "data-backup" | "storage-control" | "safety-block" | "photo-confirmation" | "coach-standby" | "safe-alternatives" | "voice-log" | "skill-mapping" | "skill-clarification" | "voice-confirmed"
+type Page = "home" | "point" | "passport" | "people" | "guidance" | "logging" | "celebration" | "scan" | "identify" | "cafesteps" | "cafecomplete" | "summary" | "summary-editor" | "summary-sharing" | "summary-shares" | "supporters" | "add-supporter" | "cheer-detail" | "confirmer" | "credential" | "credential-export" | "data-backup" | "storage-control" | "safety-block" | "photo-confirmation" | "coach-standby" | "safe-alternatives" | "voice-log" | "skill-mapping" | "skill-clarification" | "voice-confirmed" | "goal-plan"
 const A = "/assets"
 const icons = {
   logo: `${A}/e2f39.svg`,
@@ -61,13 +83,13 @@ const pageCopy: Record<Page, string> = {
   point:
     "Point and Ask. Show me what you need help with. Point your camera at anything, especially anything new or confusing. Photos are never saved.",
   passport:
-    "My Skills. You have two practice choices today: Washing Machine Laundry and Warm Food Safely. Choose the skill you want to practice.",
+    "My Skills. You have two practice choices today: Baking a Cake and Warm Food Safely. Choose the skill you want to practice.",
   people:
     "My People. Your private support network. Sarah and Jordan are trusted people you added.",
   guidance:
-    "Step guidance. Add one cup of soap. Close the soap drawer. Take all the time you need.",
+    "Step guidance. Wash your hands. Get your bowl and pan. Take all the time you need.",
   logging:
-    "You finished Washing Machine Laundry. How did it go today? There is no wrong answer.",
+    "You finished Baking a Cake. How did it go today? There is no wrong answer.",
   celebration:
     "Great work, Maya. Your progress is recorded. My Skills now has fourteen stamps.",
   scan: "Point your camera at the café screen. Keep the screen inside the frame.",
@@ -114,6 +136,46 @@ const pageCopy: Record<Page, string> = {
     "Did you mean this skill? We ask one question when we are unsure. You decide.",
   "voice-confirmed":
     "Your voice log was saved. You earned your fifteenth stamp and unlocked Coffee with Jordan.",
+  "goal-plan":
+    "Big picture idea. Small steps toward a bigger goal. This is just an idea. You decide.",
+}
+
+/** The goals Maya's stamps add up to. The card and the summary both use this. */
+const bigPictures = bigPictureFor(stampedSkillIds())
+
+/**
+ * "What your 14 stamps add up to" for the monthly summary and what supporters
+ * see. Same rules and stamps as the Big picture card, so they always match.
+ */
+const addUpTitle = `What your ${SAMPLE_STAMPS.length} stamps add up to`
+const addUpLines = stampsAddUpTo(stampedSkillIds())
+const addUpReadAloud = `${addUpTitle}. ${addUpLines.join(" ")}`
+
+/** Skills with a practice flow, for "Practice this" in a goal plan. */
+const practicePages: Partial<Record<string, Page>> = {
+  bake_cake: "guidance",
+  microwave_meal: "safe-alternatives",
+}
+
+/** The idea the Big picture card shows now, or null when it is resting. */
+function visibleBigPicture(choices = getBigPictureChoices()): BigPicture | null {
+  if (choices.restingThisVisit) return null
+  // Demo: always show the pinned goal, even if "Not now" was saved before.
+  const pinned = bigPictures.find((p) => p.goal.id === DEMO_PINNED_GOAL)
+  if (pinned) return pinned
+  return bigPictures.find((p) => !choices.notNow.includes(p.goal.id)) ?? null
+}
+
+/** What Read to me says on each page. My Skills includes the Big picture card. */
+function readAloudText(page: Page) {
+  const picture = page === "passport" ? visibleBigPicture() : null
+  // The card is at the top, so it is read first, after the page name.
+  return picture
+    ? pageCopy.passport.replace(
+        /^My Skills\. /,
+        `My Skills. ${cardReadAloud(picture)} `,
+      )
+    : pageCopy[page]
 }
 
 function Icon({
@@ -147,7 +209,7 @@ function AppHeader({ page }: { page: Page }) {
       <div className="header-actions">
         <button
           className="quiet-button"
-          onClick={() => speak(pageCopy[page])}
+          onClick={() => speak(readAloudText(page))}
           aria-label="Read this page aloud"
         >
           <Icon src={icons.sound} />
@@ -462,10 +524,11 @@ const todaysPractices: {
   page: Page
 }[] = [
   {
-    title: "Washing Machine Laundry",
-    image: `${A}/b942e.png`,
-    imageAlt: "A calm residential laundry room with front-loading machines",
-    duration: "15 min",
+    title: "Baking a Cake",
+    image: `${A}/bake-practice.jpg`,
+    imageAlt:
+      "A kitchen counter ready for baking, with cake mix, a bowl, eggs, and a cake pan",
+    duration: "40 min",
     page: "guidance",
   },
   {
@@ -495,6 +558,54 @@ function stickerFor(skillId: string) {
   if (skillId === "stovetop_cooking" || skillId === "microwave_meal") return "pot"
   return "list"
 }
+/** A gentle idea about what the person's stamps add up to. Never a task. */
+function BigPictureCard({ go }: { go: (page: Page) => void }) {
+  const choices = useBigPictureChoices()
+  const picture = visibleBigPicture(choices)
+  // Leaving My Skills ends the visit, so the next idea can show next time.
+  useEffect(() => endVisit, [])
+  if (!picture) {
+    return choices.restingThisVisit ? (
+      <p className="big-picture-resting" role="status">
+        Okay. I put that idea away.
+      </p>
+    ) : null
+  }
+  return (
+    <section className="big-picture-card" aria-labelledby="big-picture-headline">
+      <p className="big-picture-eyebrow">
+        <span aria-hidden="true">✦</span> Big picture
+      </p>
+      <p className="big-picture-noticed">{NOTICED}</p>
+      <p className="big-picture-skills">{picture.cardWhatYouDid.join(" ")}</p>
+      <h2 id="big-picture-headline">{picture.goal.headline}</h2>
+      <p className="big-picture-because">
+        {picture.because} {IF_INTERESTED}
+      </p>
+      <div className="big-picture-actions">
+        <button
+          className="big-picture-primary"
+          onClick={() => {
+            openGoal(picture.goal.id)
+            go("goal-plan")
+          }}
+        >
+          Show me how
+        </button>
+        <button
+          className="big-picture-secondary"
+          onClick={() =>
+            picture.goal.id === DEMO_PINNED_GOAL
+              ? restForThisVisit()
+              : sayNotNow(picture.goal.id)
+          }
+        >
+          Not now
+        </button>
+      </div>
+    </section>
+  )
+}
 function Passport({ go }: { go: (page: Page) => void }) {
   const [highFive, setHighFive] = useState(false)
   const saved = [...usePassportEntries()].reverse()
@@ -509,6 +620,7 @@ function Passport({ go }: { go: (page: Page) => void }) {
 
   return (
     <main className="page passport-page">
+      <BigPictureCard go={go} />
       <section className="passport-banner">
         <span>
           <b>Today's Practice</b>
@@ -540,7 +652,10 @@ function Passport({ go }: { go: (page: Page) => void }) {
             </div>
             <button
               className="primary-button centered"
-              onClick={() => go(practice.page)}
+              onClick={() => {
+                clearPracticeFromGoal()
+                go(practice.page)
+              }}
             >
               Start Steps
             </button>
@@ -677,6 +792,106 @@ function Passport({ go }: { go: (page: Page) => void }) {
     </main>
   )
 }
+/** "Show me how": small steps toward a big picture goal. Only an idea. */
+function GoalPlan({ go }: { go: (page: Page) => void }) {
+  const { openGoalId } = useBigPictureChoices()
+  const picture =
+    bigPictures.find((p) => p.goal.id === openGoalId) ?? bigPictures[0]
+  const earned = new Set(stampedSkillIds())
+  if (!picture) return null
+  const { goal } = picture
+  const tagFor = (step: (typeof goal.steps)[number]) => {
+    if (step.askForHelp) return { label: "Ask for help", kind: "help" }
+    if (step.skillId && earned.has(step.skillId))
+      return { label: "You have this stamp", kind: "earned" }
+    if (step.skillId) return { label: "New for you", kind: "new" }
+    return null
+  }
+  const listenCopy = [
+    goal.title + ".",
+    ...picture.whatYouDid,
+    picture.because,
+    ...goal.steps.map((step, index) => `Step ${index + 1}. ${step.text}`),
+    YOUR_CHOICE,
+    "There is no rush.",
+  ].join(" ")
+  return (
+    <div className="flow-screen summary-flow">
+      <FlowTopBar
+        title="Big Picture"
+        back={() => go("passport")}
+        close={() => go("home")}
+      />
+      <main className="summary-main goal-plan">
+        <SummaryLandmark label="Your big picture idea" copy={listenCopy} />
+        <header className="summary-intro">
+          <h1>{goal.title}</h1>
+          <p>{YOUR_CHOICE}</p>
+          <p>There is no rush.</p>
+        </header>
+        <section className="summary-section-card goal-plan-have">
+          <header>
+            <span className="summary-section-mark" aria-hidden="true">
+              ✓
+            </span>
+            <h2>You already have these skills</h2>
+          </header>
+          <p>{picture.whatYouDid.join(" ")}</p>
+          <p>{picture.because}</p>
+        </section>
+        <section className="summary-section-card">
+          <header>
+            <span className="summary-section-mark" aria-hidden="true">
+              ✦
+            </span>
+            <h2>Small steps, if you want to try</h2>
+          </header>
+          <ol className="goal-steps">
+            {goal.steps.map((step, index) => {
+              const tag = tagFor(step)
+              const practicePage = step.skillId
+                ? practicePages[step.skillId]
+                : undefined
+              const skillName = step.skillId ? getSkill(step.skillId)?.name : ""
+              return (
+                <li key={step.text}>
+                  <span className="goal-step-number" aria-hidden="true">
+                    {index + 1}
+                  </span>
+                  <span>
+                    <b>{step.text}</b>
+                    {tag && (
+                      <small className={`goal-step-tag ${tag.kind}`}>
+                        {tag.label}
+                      </small>
+                    )}
+                    {practicePage && (
+                      <button
+                        className="goal-step-practice"
+                        aria-label={`Practice this: ${skillName}`}
+                        onClick={() => {
+                          practiceFromGoal(goal.id)
+                          go(practicePage)
+                        }}
+                      >
+                        Practice this →
+                      </button>
+                    )}
+                  </span>
+                </li>
+              )
+            })}
+          </ol>
+        </section>
+        <div className="summary-page-actions">
+          <button className="summary-primary" onClick={() => go("passport")}>
+            Back to My Skills
+          </button>
+        </div>
+      </main>
+    </div>
+  )
+}
 function FlowTopBar({
   title,
   back,
@@ -703,96 +918,208 @@ function FlowTopBar({
     </header>
   )
 }
-function FlowProgress() {
+/** The box-mix cake practice. Step 4 is never guided: the oven is for a support person. */
+const bakingSteps: {
+  label: string
+  title: string
+  detail: string
+  items: string[]
+  next: string
+  tip?: { heading: string; tag: string; image: string; alt: string; check: string; note: string }
+  ovenHelp?: boolean
+}[] = [
+  {
+    label: "Ready",
+    title: "Wash your hands. Get your bowl and pan.",
+    detail: "Read the cake box. It tells you what to add.",
+    items: ["Cake mix box", "Mixing bowl", "Whisk or spoon", "Cake pan"],
+    next: "Mix",
+    tip: {
+      heading: "What you need",
+      tag: "On the counter",
+      image: `${A}/bake-practice.jpg`,
+      alt: "A cake mix box, bowl, whisk, eggs, water, oil, and a round cake pan on a counter",
+      check: "✓ Everything in one place",
+      note: "Put it all out before you start.",
+    },
+  },
+  {
+    label: "Mix",
+    title: "Pour the cake mix into the bowl.",
+    detail: "Add the eggs, oil, and water the box asks for.",
+    items: ["Eggs", "Oil", "Water", "Measuring cup"],
+    next: "Stir",
+    tip: {
+      heading: "Check the box",
+      tag: "Amounts",
+      image: `${A}/bake-practice.jpg`,
+      alt: "Eggs in a small dish, a cup of water, and a bottle of oil next to the bowl",
+      check: "✓ Use the amounts on the box",
+      note: "Ask for help cracking eggs if you like.",
+    },
+  },
+  {
+    label: "Stir",
+    title: "Stir until smooth. Pour it into the pan.",
+    detail: "Stirring takes about two minutes. Small bumps are okay.",
+    items: ["Whisk or spoon", "Cake pan"],
+    next: "Oven help",
+    tip: {
+      heading: "Smooth batter looks like this",
+      tag: "No dry mix",
+      image: `${A}/bake-batter.jpg`,
+      alt: "Smooth yellow cake batter in a white bowl with a whisk",
+      check: "✓ No dry mix left",
+      note: "Scrape the bowl into the pan.",
+    },
+  },
+  {
+    label: "Oven",
+    title: "Ask your support person to help with the oven.",
+    detail: "They put the cake in and take it out. The oven gets very hot.",
+    items: ["Your support person", "A timer for the time on the box"],
+    next: "How it went",
+    ovenHelp: true,
+  },
+]
+function FlowProgress({ step, labels }: { step: number; labels: string[] }) {
+  const total = labels.length
+  const percent = Math.round(((step + 1) / total) * 100)
   return (
-    <section className="flow-progress" aria-label="Step 2 of 4. 50% complete.">
+    <section
+      className="flow-progress"
+      aria-label={`Step ${step + 1} of ${total}. ${percent}% complete.`}
+    >
       <div>
-        <b>Step 2 of 4</b>
-        <span>50% Completed</span>
+        <b>
+          Step {step + 1} of {total}
+        </b>
+        <span>{percent}% Completed</span>
       </div>
       <div className="segments" aria-hidden="true">
-        {[1, 2, 3, 4].map((step) => (
-          <i className={step < 3 ? "done" : ""} key={step} />
+        {labels.map((label, index) => (
+          <i className={index <= step ? "done" : ""} key={label} />
         ))}
       </div>
       <div className="step-labels">
-        <b>1. Load</b>
-        <b>2. Soap</b>
-        <span>3. Dial</span>
-        <span>4. Start</span>
+        {labels.map((label, index) =>
+          index <= step ? (
+            <b key={label}>
+              {index + 1}. {label}
+            </b>
+          ) : (
+            <span key={label}>
+              {index + 1}. {label}
+            </span>
+          ),
+        )}
       </div>
     </section>
   )
 }
 function Guidance({ go }: { go: (page: Page) => void }) {
   const [paused, setPaused] = useState(false)
-  const [items, setItems] = useState([true, true])
+  const [stepIndex, setStepIndex] = useState(0)
+  const step = bakingSteps[stepIndex]
+  const [ready, setReady] = useState<boolean[][]>(() =>
+    bakingSteps.map((s) => s.items.map(() => false)),
+  )
+  const items = ready[stepIndex]
   const toggleItem = (index: number) =>
-    setItems((current) =>
-      current.map((value, itemIndex) => (index === itemIndex ? !value : value)),
+    setReady((current) =>
+      current.map((list, listIndex) =>
+        listIndex === stepIndex
+          ? list.map((value, itemIndex) => (itemIndex === index ? !value : value))
+          : list,
+      ),
     )
+  const goToStep = (index: number) => {
+    setStepIndex(index)
+    setPaused(false)
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    window.scrollTo({ top: 0, behavior: reduceMotion ? "auto" : "smooth" })
+  }
+  const { practiceFromGoalId } = useBigPictureChoices()
+  const previous = () =>
+    stepIndex === 0
+      ? go(practiceFromGoalId ? "goal-plan" : "passport")
+      : goToStep(stepIndex - 1)
+  const next = () =>
+    stepIndex === bakingSteps.length - 1 ? go("logging") : goToStep(stepIndex + 1)
   return (
     <div className="flow-screen">
       <FlowTopBar
         title="Step Guidance"
-        back={() => go("passport")}
+        back={previous}
         close={() => go("home")}
       />
       <main className="flow-main">
         <div className="context-chips">
-          <span>Washing Machine Laundry</span>
+          <span>Baking a Cake</span>
           <span>My Apartment</span>
         </div>
-        <FlowProgress />
+        <FlowProgress step={stepIndex} labels={bakingSteps.map((s) => s.label)} />
         <aside className="reassurance">
           <b>♥ No rush at all</b>
-          <p>The washing machine will wait for you.</p>
+          <p>The cake mix will wait for you.</p>
         </aside>
         <div className="guidance-layout">
-          <article className="instruction-card">
-            <p className="flow-label">Instruction</p>
-            <h1>Add one cup of soap. Close the soap drawer.</h1>
-            <p>Pour detergent into compartment number 2.</p>
+          <article className="instruction-card" aria-live="polite">
+            <p className="flow-label">
+              {step.ovenHelp ? "Ask for help" : "Instruction"}
+            </p>
+            <h1>{step.title}</h1>
+            <p>{step.detail}</p>
             <button
               className="audio-pill"
-              onClick={() => speak(pageCopy.guidance)}
+              onClick={() => speak(`${step.title} ${step.detail}`)}
             >
               <Icon src={icons.sound} />
               Read this step aloud
             </button>
-            <section className="drawer-card">
-              <div className="drawer-heading">
-                <h2>Where the soap goes</h2>
-                <span>Compartment II</span>
-              </div>
-              <div className="drawer-photo">
-                <img
-                  src={`${A}/69df6.png`}
-                  alt="Washing machine soap drawer with compartment two open"
-                />
-                <div>
-                  <b>✓ Soap Compartment II</b>
-                  <span>Fill only to the max line.</span>
+            {step.tip && (
+              <section className="drawer-card">
+                <div className="drawer-heading">
+                  <h2>{step.tip.heading}</h2>
+                  <span>{step.tip.tag}</span>
                 </div>
-              </div>
-            </section>
+                <div className="drawer-photo">
+                  <img src={step.tip.image} alt={step.tip.alt} />
+                  <div>
+                    <b>{step.tip.check}</b>
+                    <span>{step.tip.note}</span>
+                  </div>
+                </div>
+              </section>
+            )}
+            {step.ovenHelp && (
+              <section className="oven-help" aria-label="Safety">
+                <b>Companion does not guide ovens.</b>
+                <p>Ovens get very hot. A support person does this part.</p>
+                <p>While the cake bakes, you could wash the bowl.</p>
+              </section>
+            )}
           </article>
           <aside className="guidance-side">
             <section className="items-card">
               <div>
-                <h2>Items Needed</h2>
-                <span>{items.filter(Boolean).length} of 2 ready</span>
+                <h2>{step.ovenHelp ? "You need" : "Items Needed"}</h2>
+                <span>
+                  {items.filter(Boolean).length} of {step.items.length} ready
+                </span>
               </div>
-              {["Laundry detergent liquid", "Measuring cap"].map(
-                (item, index) => (
-                  <button key={item} onClick={() => toggleItem(index)}>
-                    <i className={items[index] ? "checked" : ""}>
-                      {items[index] ? "✓" : ""}
-                    </i>
-                    {item}
-                  </button>
-                ),
-              )}
+              {step.items.map((item, index) => (
+                <button
+                  key={item}
+                  onClick={() => toggleItem(index)}
+                  aria-pressed={items[index]}
+                >
+                  <i className={items[index] ? "checked" : ""}>
+                    {items[index] ? "✓" : ""}
+                  </i>
+                  {item}
+                </button>
+              ))}
             </section>
             <section className="coach-support">
               <span className="coach-initial">S</span>
@@ -800,8 +1127,16 @@ function Guidance({ go }: { go: (page: Page) => void }) {
                 <b>Sarah</b>
                 <small>Family friend in My People</small>
               </span>
-              <button onClick={() => speak("Sarah is ready to help.")}>
-                Get audio support
+              <button
+                onClick={() =>
+                  speak(
+                    step.ovenHelp
+                      ? "Sarah can help with the oven. Ask her when you are ready."
+                      : "Sarah is ready to help.",
+                  )
+                }
+              >
+                {step.ovenHelp ? "Ask Sarah for help" : "Get audio support"}
               </button>
             </section>
           </aside>
@@ -814,14 +1149,14 @@ function Guidance({ go }: { go: (page: Page) => void }) {
         </div>
       )}
       <nav className="flow-actions" aria-label="Step controls">
-        <button className="flow-secondary" onClick={() => go("passport")}>
+        <button className="flow-secondary" onClick={previous}>
           ← Previous
         </button>
         <button className="flow-secondary" onClick={() => setPaused(!paused)}>
           {paused ? "Continue" : "Pause"}
         </button>
-        <button className="flow-primary" onClick={() => go("logging")}>
-          Next: Turn dial to Normal →
+        <button className="flow-primary" onClick={next}>
+          Next: {step.next} →
         </button>
       </nav>
     </div>
@@ -850,7 +1185,7 @@ function Logging({ go }: { go: (page: Page) => void }) {
   // Save what the person chose, on this device, then celebrate.
   const saveAndContinue = () => {
     addEntry({
-      skillId: "laundry",
+      skillId: "bake_cake",
       level: SUPPORT_LEVELS[choice] ?? "with_prompt",
       place: "My Apartment",
       via: "practice",
@@ -871,7 +1206,7 @@ function Logging({ go }: { go: (page: Page) => void }) {
           <span className="finish-check">✓</span>
           <div>
             <span className="mint-badge">Step 4 of 4 complete</span>
-            <h1>Great job! You finished Washing Machine Laundry!</h1>
+            <h1>Great job! You finished Baking a Cake!</h1>
             <p>Choose one answer below.</p>
           </div>
           <button
@@ -883,8 +1218,8 @@ function Logging({ go }: { go: (page: Page) => void }) {
           </button>
           <img
             className="finish-thumb"
-            src={`${A}/6d93e.png`}
-            alt="Washing machine laundry preview"
+            src={`${A}/bake-cake-thumb.jpg`}
+            alt="A frosted homemade cake"
           />
         </section>
         <div className="logging-layout">
@@ -919,7 +1254,7 @@ function Logging({ go }: { go: (page: Page) => void }) {
                 <small>Stamp</small>
               </strong>
               <span>
-                <b>Washing Machine Laundry</b>
+                <b>Baking a Cake</b>
                 <small>{choice + 1} of 3 dots earned</small>
               </span>
             </div>
@@ -993,6 +1328,9 @@ function Logging({ go }: { go: (page: Page) => void }) {
 }
 function Celebration({ go }: { go: (page: Page) => void }) {
   const [saved, setSaved] = useState(true)
+  // When the practice started from a goal plan, offer the way back to it.
+  const { practiceFromGoalId } = useBigPictureChoices()
+  const fromGoal = bigPictures.find((p) => p.goal.id === practiceFromGoalId)
   return (
     <div className="flow-screen">
       <FlowTopBar
@@ -1023,7 +1361,7 @@ function Celebration({ go }: { go: (page: Page) => void }) {
           <div className="celebration-heading">
             <span>
               <h1>Great work, Maya!</h1>
-              <p>Your laundry log is now in My Skills.</p>
+              <p>Your baking log is now in My Skills.</p>
             </span>
             <button
               className="audio-pill"
@@ -1056,11 +1394,11 @@ function Celebration({ go }: { go: (page: Page) => void }) {
           <section className="metric-grid">
             <div>
               <small>Confirmed routine</small>
-              <b>✓ Wash & Fold Cycle</b>
+              <b>✓ Box-mix cake</b>
             </div>
             <div>
               <small>Support Used</small>
-              <b>1 spoken reminder</b>
+              <b>Sarah helped with the oven</b>
             </div>
             <div>
               <small>Time Spent</small>
@@ -1074,8 +1412,8 @@ function Celebration({ go }: { go: (page: Page) => void }) {
               <p className="flow-label">My Skills balance</p>
               <h2>14 Stamps</h2>
             </span>
-            <img src={`${A}/6d93e.png`} alt="Laundry stamp preview" />
-            <p>+1 permanent laundry stamp</p>
+            <img src={`${A}/bake-cake-thumb.jpg`} alt="Baking stamp preview" />
+            <p>+1 permanent baking stamp</p>
           </article>
           <article className="supporter-note">
             <img src={`${A}/1bb43.png`} alt="Jordan, trusted friend" />
@@ -1084,19 +1422,42 @@ function Celebration({ go }: { go: (page: Page) => void }) {
               <h2>Jordan</h2>
             </span>
             <blockquote>
-              “Proud of you starting before 11 today, Maya!”
+              “That cake smells amazing, Maya! Proud of you.”
             </blockquote>
           </article>
         </section>
       </main>
-      <nav className="flow-actions logging-actions">
-        <button className="flow-secondary" onClick={() => go("home")}>
-          Return to Daily Home
-        </button>
-        <button className="flow-primary" onClick={() => go("passport")}>
-          View My Skills →
-        </button>
-      </nav>
+      {fromGoal ? (
+        <nav className="flow-actions logging-actions">
+          <button
+            className="flow-secondary"
+            onClick={() => {
+              clearPracticeFromGoal()
+              go("passport")
+            }}
+          >
+            View My Skills
+          </button>
+          <button
+            className="flow-primary"
+            onClick={() => {
+              clearPracticeFromGoal()
+              go("goal-plan")
+            }}
+          >
+            Back to your {fromGoal.goal.shortName} idea →
+          </button>
+        </nav>
+      ) : (
+        <nav className="flow-actions logging-actions">
+          <button className="flow-secondary" onClick={() => go("home")}>
+            Return to Daily Home
+          </button>
+          <button className="flow-primary" onClick={() => go("passport")}>
+            View My Skills →
+          </button>
+        </nav>
+      )}
     </div>
   )
 }
@@ -2112,6 +2473,35 @@ function MonthlySummary({ go }: { go: (page: Page) => void }) {
               </ul>
             </section>
           ))}
+          {addUpLines.length > 0 && (
+            <section
+              className="summary-section-card add-up-card"
+              aria-labelledby="add-up-title"
+            >
+              <header>
+                <span className="summary-section-mark" aria-hidden="true">
+                  {summarySections.length + 1}
+                </span>
+                <h2 id="add-up-title">{addUpTitle}</h2>
+                <button
+                  onClick={() => speak(addUpReadAloud)}
+                  aria-label={`Listen to ${addUpTitle}`}
+                >
+                  Listen
+                </button>
+              </header>
+              <ul>
+                {addUpLines
+                  .filter((line) => line !== CLOSING)
+                  .map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+              </ul>
+              {addUpLines.includes(CLOSING) && (
+                <p className="add-up-closing">{CLOSING}</p>
+              )}
+            </section>
+          )}
         </div>
         <aside className="summary-private-note">
           <span aria-hidden="true">✓</span>
@@ -2392,6 +2782,12 @@ function PrivateSharing({ go }: { go: (page: Page) => void }) {
               <b>November 2024 Summary Snapshot</b>
               <p>Shows your 14 milestone stamps and routine counts.</p>
             </article>
+            {addUpLines.length > 0 && (
+              <article className="add-up-share">
+                <b>{addUpTitle}</b>
+                <p>{addUpLines.join(" ")}</p>
+              </article>
+            )}
             <article className="level-preview">
               <b>Skill level display:</b>
               <span className="level-dots">
@@ -2489,7 +2885,7 @@ function ActiveShares({ go }: { go: (page: Page) => void }) {
               className="summary-secondary"
               onClick={() =>
                 speak(
-                  "Mom sees your November summary, 14 stamps, and routine counts.",
+                  `Mom sees your November summary, 14 stamps, and routine counts. ${addUpReadAloud}`,
                 )
               }
             >
@@ -5715,6 +6111,7 @@ export default function App() {
     "skill-mapping",
     "skill-clarification",
     "voice-confirmed",
+    "goal-plan",
   ].includes(page)
   const go = (next: Page) => {
     setPage(next)
@@ -5759,6 +6156,7 @@ export default function App() {
       {page === "skill-mapping" && <SkillMapping go={go} draft={voiceDraft} />}
       {page === "skill-clarification" && <SkillClarification go={go} />}
       {page === "voice-confirmed" && <VoiceLogConfirmed go={go} />}
+      {page === "goal-plan" && <GoalPlan go={go} />}
       {!focusedFlow && <BottomNav page={page} go={go} />}
     </div>
   )

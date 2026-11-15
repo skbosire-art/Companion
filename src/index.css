@@ -4973,3 +4973,189 @@ textarea:focus-visible {
 .cafe-step-actions.compact button:last-child{grid-column:auto;border:0;color:#fff;background:var(--color-brand)}
 .cafe-step-actions.compact button:last-child:disabled{color:#fff}
 .cafe-step-actions.compact button:last-child:hover,.cafe-step-actions.compact button:last-child:active{background:var(--color-brand-hover)}
+
+/* Big picture: a gentle idea about what your stamps add up to. Never a task. */
+.big-picture-card {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0;
+  padding: 20px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-large);
+  background: linear-gradient(160deg, var(--color-mint-soft), #fff 70%);
+  box-shadow: var(--shadow-raised);
+}
+.big-picture-eyebrow {
+  justify-self: start;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  color: var(--color-brand);
+  background: var(--color-mint);
+  font: 700 16px/24px 'Public Sans:Bold';
+}
+.big-picture-noticed,
+.big-picture-because {
+  color: var(--color-ink-muted);
+  font: 400 18px/28px 'Public Sans:Regular';
+}
+.big-picture-skills {
+  color: var(--color-ink);
+  font: 600 18px/28px 'Public Sans:SemiBold';
+}
+.big-picture-card h2 {
+  color: var(--color-brand);
+  font: 700 24px/36px 'Public Sans:Bold';
+}
+.big-picture-actions {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 10px;
+  margin-top: 4px;
+}
+.big-picture-actions button {
+  min-height: 52px;
+  padding: 10px 16px;
+  border-radius: var(--radius-pill);
+  font: 700 17px/26px 'Public Sans:Bold';
+}
+.big-picture-primary {
+  border: 1px solid var(--color-brand);
+  color: #fff;
+  background: var(--color-brand);
+}
+.big-picture-primary:hover,
+.big-picture-primary:active {
+  background: var(--color-brand-hover);
+}
+.big-picture-secondary {
+  border: 1px solid var(--color-border);
+  color: var(--color-brand);
+  background: #fff;
+}
+.big-picture-resting {
+  margin: 18px 0;
+  padding: 12px 16px;
+  border-radius: var(--radius-medium);
+  color: var(--color-ink-muted);
+  background: var(--color-blue-mist);
+  font: 400 18px/28px 'Public Sans:Regular';
+}
+.goal-plan-have p {
+  font: 400 18px/28px 'Public Sans:Regular';
+}
+.goal-steps {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.summary-section-card .goal-steps li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+}
+.summary-section-card .goal-steps li:before {
+  content: none;
+}
+.goal-steps li > span:last-child {
+  display: grid;
+  gap: 4px;
+}
+.goal-steps b {
+  font: 600 18px/28px 'Public Sans:SemiBold';
+}
+.goal-step-number {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: var(--radius-round);
+  color: var(--color-brand);
+  background: #fff;
+  font: 700 16px/24px 'Public Sans:Bold';
+}
+.goal-step-tag {
+  justify-self: start;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  font: 700 16px/24px 'Public Sans:Bold';
+}
+.goal-step-tag.earned {
+  color: var(--color-brand);
+  background: var(--color-mint);
+}
+.goal-step-tag.new {
+  color: var(--color-ink-muted);
+  background: #fff;
+}
+.goal-step-tag.help {
+  color: #7c2d12;
+  background: #fff7ed;
+}
+@media (max-width: 560px) {
+  .big-picture-card {
+    padding: 16px;
+  }
+  .big-picture-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Baking practice: the oven step is never guided. */
+.oven-help {
+  display: grid;
+  gap: 6px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid #fed7aa;
+  border-radius: 14px;
+  background: #fff7ed;
+}
+.oven-help b {
+  color: #7c2d12;
+  font: 700 18px/28px 'Public Sans:Bold';
+}
+.oven-help p {
+  color: var(--color-ink);
+  font: 400 18px/28px 'Public Sans:Regular';
+}
+.goal-step-practice {
+  justify-self: start;
+  min-height: 48px;
+  margin-top: 4px;
+  padding: 8px 16px;
+  border: 1px solid var(--color-brand);
+  border-radius: var(--radius-pill);
+  color: #fff;
+  background: var(--color-brand);
+  font: 700 16px/24px 'Public Sans:Bold';
+}
+.goal-step-practice:hover,
+.goal-step-practice:active {
+  background: var(--color-brand-hover);
+}
+
+/* Monthly summary: what your stamps add up to (same rules as the Big picture card). */
+.add-up-card {
+  border-color: var(--color-border-soft);
+  background: linear-gradient(160deg, var(--color-mint-soft), #fff 70%);
+}
+.add-up-card li {
+  background: #fff;
+}
+.add-up-closing {
+  padding: 12px 14px;
+  border-radius: var(--radius-medium);
+  color: var(--color-brand);
+  background: var(--color-mint);
+  font: 700 18px/28px 'Public Sans:Bold';
+}
+.add-up-share {
+  border-left: 4px solid var(--color-brand);
+}

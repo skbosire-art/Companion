@@ -35,6 +35,14 @@ export const SKILLS: Skill[] = [
     nextSkillIds: [],
   },
   {
+    // The oven step is never guided: a support person helps with the oven.
+    id: "bake_cake",
+    name: "Baking a Cake",
+    category: "cooking",
+    description: "Bake a box-mix cake, with a support person for the oven.",
+    nextSkillIds: ["cook_for_a_friend"],
+  },
+  {
     id: "grocery_list",
     name: "Grocery List",
     category: "cooking",
