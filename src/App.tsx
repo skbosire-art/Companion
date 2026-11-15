@@ -1,5 +1,42 @@
 import { useEffect, useRef, useState } from "react"
 
+import {
+  CATEGORY_LABELS,
+  SUPPORT_LEVELS,
+} from "./shared/types"
+import {
+  getSkill,
+  isSafetyBlocked,
+  safetyCategory,
+} from "./shared/skills"
+import type { SafetyCategory } from "./shared/skills"
+
+import { apiAvailable } from "./api"
+import { speak } from "./read-aloud"
+import {
+  askMessage,
+  markSent,
+  shareByText,
+  startAsk,
+  useAskRequest,
+} from "./ask-friend"
+import { matchLog, saveLog, useLogSession } from "./log-session"
+import { useVoiceTyping } from "./voice-typing"
+import {
+  addEntry,
+  HELP_LABELS,
+  helpLabel,
+  removeEntry,
+  usePassportEntries,
+} from "./passport-store"
+import {
+  askStepsFor,
+  resetPointAsk,
+  setStepIndex,
+  startPointAsk,
+  usePointAskSession,
+} from "./point-ask-session"
+
 type Page = "home" | "point" | "passport" | "people" | "guidance" | "logging" | "celebration" | "scan" | "identify" | "cafesteps" | "cafecomplete" | "summary" | "summary-editor" | "summary-sharing" | "summary-shares" | "supporters" | "add-supporter" | "cheer-detail" | "confirmer" | "credential" | "credential-export" | "data-backup" | "storage-control" | "safety-block" | "photo-confirmation" | "coach-standby" | "safe-alternatives" | "voice-log" | "skill-mapping" | "skill-clarification" | "voice-confirmed"
 const A = "/assets"
 const icons = {
@@ -22,7 +59,7 @@ const icons = {
 const pageCopy: Record<Page, string> = {
   home: "Good morning, Maya. How can I help you today? Choose My Skills to practice your skills, or Point and Ask for visual help.",
   point:
-    "Point and Ask. Show me what you need help with. Point at any appliance, transit sign, menu, button, or label. Photos are never saved.",
+    "Point and Ask. Show me what you need help with. Point your camera at anything, especially anything new or confusing. Photos are never saved.",
   passport:
     "My Skills. You have two practice choices today: Washing Machine Laundry and Warm Food Safely. Choose the skill you want to practice.",
   people:
@@ -89,13 +126,6 @@ function Icon({
   className?: string
 }) {
   return <img className={`icon ${className}`} src={src} alt={alt} />
-}
-function speak(text: string) {
-  if (!("speechSynthesis" in window)) return
-  window.speechSynthesis.cancel()
-  const words = new SpeechSynthesisUtterance(text)
-  words.rate = 0.88
-  window.speechSynthesis.speak(words)
 }
 function AppHeader({ page }: { page: Page }) {
   return (
@@ -240,13 +270,12 @@ function Home({ go }: { go: (page: Page) => void }) {
             <i className="corner tr" aria-hidden="true" />
             <i className="corner bl" aria-hidden="true" />
             <i className="corner br" aria-hidden="true" />
-            <figcaption>Aim camera at any confusing item</figcaption>
           </figure>
           <p className="eyebrow feature-heading">Point & Ask</p>
           <h2 className="feature-tagline">Visual Help Anywhere</h2>
           <p>
-            Point your camera at appliances, signs, labels, or counters for
-            instant guidance.
+            Point your camera at anything new or confusing for step-by-step
+            help.
           </p>
           <button
             className="primary-button home-point-action"
@@ -285,7 +314,7 @@ function Home({ go }: { go: (page: Page) => void }) {
   )
 }
 const categories = [
-  ["washer", "Appliances & Machines", "Washers, microwaves, kettles, stoves"],
+  ["washer", "Appliances & Machines", "Washers, microwaves, kettles, coffee machines"],
   [
     "train",
     "Transit & Street Signs",
@@ -300,6 +329,7 @@ const categories = [
 ]
 function PointAsk({ go }: { go: (page: Page) => void }) {
   const inputRef = useRef<HTMLInputElement>(null)
+  const fileRef = useRef<File | null>(null)
   const [photo, setPhoto] = useState<string | null>(null)
   const [message, setMessage] = useState("")
   useEffect(
@@ -311,15 +341,26 @@ function PointAsk({ go }: { go: (page: Page) => void }) {
   const onFile = (file?: File) => {
     if (!file) return
     if (photo) URL.revokeObjectURL(photo)
+    fileRef.current = file
     setPhoto(URL.createObjectURL(file))
     setMessage("Photo ready. Tap Get simple guidance.")
+  }
+  const getGuidance = () => {
+    if (apiAvailable && fileRef.current) {
+      void startPointAsk(fileRef.current)
+      go("identify")
+      return
+    }
+    setMessage(
+      "This looks like a control panel. Start by finding the large round power button. Take your time.",
+    )
   }
   return (
     <main className="page point-page">
       <section className="screen-intro">
         <span className="slate-badge">✦ Visual Helper</span>
         <h1>Show me what you need help with.</h1>
-        <p>Point at any appliance, transit sign, menu, button, or label.</p>
+        <p>Point your camera at anything, especially anything new or confusing.</p>
       </section>
       <section className="camera-card">
         <div className="viewfinder">
@@ -338,11 +379,7 @@ function PointAsk({ go }: { go: (page: Page) => void }) {
           <span className="camera-orb">
             <Icon src={icons.camera} />
           </span>
-          <b>
-            {photo
-              ? "Photo ready for guidance"
-              : "Aim camera at any confusing item"}
-          </b>
+          {photo && <b>Photo ready for guidance</b>}
         </div>
         <input
           ref={inputRef}
@@ -364,14 +401,7 @@ function PointAsk({ go }: { go: (page: Page) => void }) {
           Or upload a photo from your phone
         </button>
         {photo && (
-          <button
-            className="guidance-button"
-            onClick={() =>
-              setMessage(
-                "This looks like a control panel. Start by finding the large round power button. Take your time.",
-              )
-            }
-          >
+          <button className="guidance-button" onClick={getGuidance}>
             Get simple guidance
           </button>
         )}
@@ -380,15 +410,9 @@ function PointAsk({ go }: { go: (page: Page) => void }) {
             {message}
           </p>
         )}
-        <button
-          className="safety-demo-button"
-          onClick={() => go("safety-block")}
-        >
-          Check a stovetop safety example
-        </button>
       </section>
       <section className="examples">
-        <h2>Examples of what we explain:</h2>
+        <h2>Works with almost anything, like:</h2>
         <div className="category-list">
           {categories.map(([sticker, title, copy]) => (
             <article className="category-card" key={title}>
@@ -452,8 +476,28 @@ const todaysPractices: {
     page: "safe-alternatives",
   },
 ]
+// Short day label for saved entries: "Today", "Yesterday", or the weekday.
+function dayLabel(iso: string) {
+  const day = new Date(iso)
+  const today = new Date()
+  const days = Math.round(
+    (new Date(today.toDateString()).getTime() -
+      new Date(day.toDateString()).getTime()) /
+      86_400_000,
+  )
+  if (days === 0) return "Today"
+  if (days === 1) return "Yesterday"
+  return day.toLocaleDateString(undefined, { weekday: "long" })
+}
+function stickerFor(skillId: string) {
+  const category = getSkill(skillId)?.category
+  if (category === "getting_around") return "rail"
+  if (skillId === "stovetop_cooking" || skillId === "microwave_meal") return "pot"
+  return "list"
+}
 function Passport({ go }: { go: (page: Page) => void }) {
   const [highFive, setHighFive] = useState(false)
+  const saved = [...usePassportEntries()].reverse()
   const [practiceIndex, setPracticeIndex] = useState(0)
   const practice = todaysPractices[practiceIndex]
   const showPreviousPractice = () =>
@@ -539,9 +583,40 @@ function Passport({ go }: { go: (page: Page) => void }) {
       <section className="recent-section">
         <div className="section-heading">
           <h2>Recent Practice</h2>
-          <span>3 Completed</span>
+          <span>{saved.length + practices.length} Completed</span>
         </div>
         <div className="practice-list">
+          {saved.slice(0, 5).map((entry) => {
+            const skill = getSkill(entry.skillId)
+            const label = helpLabel(entry)
+            return (
+              <article className="practice-card" key={entry.id}>
+                <span className={`mini-sticker ${stickerFor(entry.skillId)}`} />
+                <span className="practice-name">
+                  <b>{skill?.name ?? entry.skillId}</b>
+                  <small>
+                    {entry.place ||
+                      (skill ? CATEGORY_LABELS[skill.category] : "")}
+                  </small>
+                </span>
+                <MasteryRing />
+                <span
+                  className="mastered"
+                  style={{ maxWidth: "40%", textAlign: "right" }}
+                >
+                  <b>
+                    {label.replace(/^[●○]+\s*/, "")}
+                  </b>
+                  <small>
+                    {dayLabel(entry.at)}
+                    {entry.source === "confirmed" && entry.confirmedBy
+                      ? ` · with ${entry.confirmedBy}`
+                      : ""}
+                  </small>
+                </span>
+              </article>
+            )
+          })}
           {practices.map(([title, type, day, sticker]) => (
             <article className="practice-card" key={title}>
               <span className={`mini-sticker ${sticker}`} />
@@ -573,7 +648,7 @@ function Passport({ go }: { go: (page: Page) => void }) {
           <small>View and save your official skill record.</small>
         </button>
         <button onClick={() => go("data-backup")}>
-          <span>Local-first</span>
+          <span>On this phone</span>
           <b>Back Up My Skills</b>
           <small>Save your progress to an offline file.</small>
         </button>
@@ -772,6 +847,18 @@ const observations = [
 function Logging({ go }: { go: (page: Page) => void }) {
   const [choice, setChoice] = useState(1)
   const [confirmed, setConfirmed] = useState(true)
+  // Save what the person chose, on this device, then celebrate.
+  const saveAndContinue = () => {
+    addEntry({
+      skillId: "laundry",
+      level: SUPPORT_LEVELS[choice] ?? "with_prompt",
+      place: "My Apartment",
+      via: "practice",
+      source: confirmed ? "confirmed" : "self",
+      confirmedBy: confirmed ? "Sarah" : undefined,
+    })
+    go("celebration")
+  }
   return (
     <div className="flow-screen">
       <FlowTopBar
@@ -897,7 +984,7 @@ function Logging({ go }: { go: (page: Page) => void }) {
         <button className="flow-secondary" onClick={() => go("guidance")}>
           ← Edit previous steps
         </button>
-        <button className="flow-primary" onClick={() => go("celebration")}>
+        <button className="flow-primary" onClick={saveAndContinue}>
           Save to My Skills & Continue →
         </button>
       </nav>
@@ -977,7 +1064,7 @@ function Celebration({ go }: { go: (page: Page) => void }) {
             </div>
             <div>
               <small>Time Spent</small>
-              <b>Self-paced. No timers.</b>
+              <b>Take your time</b>
             </div>
           </section>
         </article>
@@ -1021,6 +1108,7 @@ const cafeGoals = [
 ]
 function CafeScan({ go }: { go: (page: Page) => void }) {
   const inputRef = useRef<HTMLInputElement>(null)
+  const uploadRef = useRef<HTMLInputElement>(null)
   const [photo, setPhoto] = useState<string | null>(null)
   const [goal, setGoal] = useState(0)
   const [flash, setFlash] = useState(false)
@@ -1034,6 +1122,68 @@ function CafeScan({ go }: { go: (page: Page) => void }) {
     if (!file) return
     if (photo) URL.revokeObjectURL(photo)
     setPhoto(URL.createObjectURL(file))
+    if (apiAvailable) {
+      void startPointAsk(file)
+      go("identify")
+    }
+  }
+  // With the API on, the viewfinder shows the live camera. If the browser
+  // can't open it (no permission, no camera), tapping opens the phone camera.
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const [camera, setCamera] = useState<"starting" | "on" | "off">(
+    apiAvailable ? "starting" : "off",
+  )
+  useEffect(() => {
+    if (!apiAvailable) return
+    let stream: MediaStream | null = null
+    let cancelled = false
+    navigator.mediaDevices
+      ?.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false,
+      })
+      .then((s) => {
+        if (cancelled) {
+          s.getTracks().forEach((track) => track.stop())
+          return
+        }
+        stream = s
+        if (videoRef.current) videoRef.current.srcObject = s
+        setCamera("on")
+      })
+      .catch(() => setCamera("off")) ?? setCamera("off")
+    return () => {
+      cancelled = true
+      stream?.getTracks().forEach((track) => track.stop())
+    }
+  }, [])
+  const captureFrame = () => {
+    const video = videoRef.current
+    if (!video || !video.videoWidth) return
+    const canvas = document.createElement("canvas")
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    canvas.getContext("2d")?.drawImage(video, 0, 0)
+    canvas.toBlob(
+      (blob) => {
+        if (blob) {
+          choosePhoto(new File([blob], "photo.jpg", { type: "image/jpeg" }))
+        }
+      },
+      "image/jpeg",
+      0.9,
+    )
+  }
+  // With the API on, Capture uses the live camera (or opens the phone camera);
+  // without it, the designer's sample flow runs.
+  const scan = () => {
+    if (apiAvailable) {
+      if (camera === "on") captureFrame()
+      else inputRef.current?.click()
+      return
+    }
+    resetPointAsk()
+    go("identify")
   }
   return (
     <div className="flow-screen cafe-flow">
@@ -1044,21 +1194,63 @@ function CafeScan({ go }: { go: (page: Page) => void }) {
       />
       <main className="flow-main cafe-main">
         <div className="cafe-landmark">
-          <span>Step 1 of 4 · Memory-only scan</span>
-          <button onClick={() => speak(pageCopy.scan)}>
+          <span>Step 1 of 4 · Take a photo</span>
+          <button
+            onClick={() =>
+              speak(
+                apiAvailable
+                  ? "Point your camera at what you need help with. We help step by step."
+                  : pageCopy.scan,
+              )
+            }
+          >
             <Icon src={icons.sound} />
             Read aloud
           </button>
         </div>
         <p className="cafe-intro">
-          Point your camera at the café screen. We help step by step.
+          {apiAvailable
+            ? "Point your camera at what you need help with. We help step by step."
+            : "Point your camera at the café screen. We help step by step."}
         </p>
-        <section className="cafe-viewfinder">
-          <img
-            src={photo || `${A}/502a5.png`}
-            alt="Café self-order touchscreen kiosk"
-          />
-          <span className="camera-status">● Camera active</span>
+        <section
+          className="cafe-viewfinder"
+          onClick={
+            apiAvailable && camera === "off"
+              ? () => inputRef.current?.click()
+              : undefined
+          }
+          style={
+            apiAvailable && camera === "off" ? { cursor: "pointer" } : undefined
+          }
+        >
+          {apiAvailable && camera !== "off" ? (
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              aria-label="Live camera view"
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            />
+          ) : apiAvailable && !photo ? (
+            <div
+              aria-hidden="true"
+              style={{ width: "100%", height: "100%", background: "var(--color-primary)" }}
+            />
+          ) : (
+            <img
+              src={photo || `${A}/502a5.png`}
+              alt="Café self-order touchscreen kiosk"
+            />
+          )}
+          <span className="camera-status">
+            {!apiAvailable || camera === "on"
+              ? "● Camera active"
+              : camera === "starting"
+                ? "● Starting camera..."
+                : "● Camera off"}
+          </span>
           <button
             className={flash ? "flash active" : "flash"}
             onClick={() => setFlash(!flash)}
@@ -1071,10 +1263,25 @@ function CafeScan({ go }: { go: (page: Page) => void }) {
           <i className="corner tr" />
           <i className="corner bl" />
           <i className="corner br" />
-          <div className="aim-prompt">
-            <b>Aim at the order screen</b>
-            <span>Keep screen inside the frame</span>
-          </div>
+          {!apiAvailable ? (
+            <div className="aim-prompt">
+              <b>Aim at the order screen</b>
+              <span>Keep screen inside the frame</span>
+            </div>
+          ) : camera === "off" ? (
+            <div className="aim-prompt">
+              <b>Tap here to open your camera</b>
+              <span>Then take a photo of what you need help with</span>
+            </div>
+          ) : (
+            <div
+              className="aim-prompt"
+              style={{ top: "auto", bottom: 14, transform: "translateX(-50%)" }}
+            >
+              <b>Aim at what you need help with</b>
+              <span>Then tap Capture Photo</span>
+            </div>
+          )}
         </section>
         <input
           ref={inputRef}
@@ -1084,14 +1291,24 @@ function CafeScan({ go }: { go: (page: Page) => void }) {
           capture="environment"
           onChange={(event) => choosePhoto(event.target.files?.[0])}
         />
+        {/* No capture attribute, so phones open the photo library. */}
+        <input
+          ref={uploadRef}
+          className="file-input"
+          type="file"
+          accept="image/*"
+          onChange={(event) => choosePhoto(event.target.files?.[0])}
+        />
         <div className="capture-actions">
-          <button className="flow-primary" onClick={() => go("identify")}>
+          <button className="flow-primary" onClick={scan}>
             <Icon src={icons.camera} />
             Capture Photo
           </button>
           <button
             className="flow-secondary"
-            onClick={() => inputRef.current?.click()}
+            onClick={() =>
+              (apiAvailable ? uploadRef : inputRef).current?.click()
+            }
           >
             <Icon src={icons.upload} />
             Upload photo instead
@@ -1105,6 +1322,7 @@ function CafeScan({ go }: { go: (page: Page) => void }) {
             <p>It checks and deletes it immediately.</p>
           </span>
         </section>
+        {!apiAvailable && (
         <section className="goal-section">
           <div>
             <h2>What do you want to do?</h2>
@@ -1128,18 +1346,122 @@ function CafeScan({ go }: { go: (page: Page) => void }) {
             ))}
           </div>
         </section>
+        )}
       </main>
-      <nav className="cafe-bottom">
-        <button className="flow-primary" onClick={() => go("identify")}>
-          Scan Kiosk Screen →
-        </button>
-      </nav>
     </div>
   )
 }
+// Ideas to tap on "What do you want to do with it?", by skill.
+const GOAL_IDEAS: Record<string, string[]> = {
+  laundry: ["Wash my clothes", "Wash my bedsheets", "Pick the right setting"],
+  dryer: ["Dry my clothes", "Pick the right setting"],
+  cafe_self_order: ["Order a drink", "Order food", "Pay"],
+  microwave_meal: ["Warm up my food", "Set the time"],
+  dishes: ["Wash the dishes", "Start the dishwasher"],
+  light_rail_to_work: ["Buy a ticket", "Find my train"],
+  new_bus_route: ["Buy a ticket", "Find my bus"],
+  grocery_shopping: ["Find the price", "Pay"],
+}
+const DEFAULT_GOAL_IDEAS = ["Turn it on", "Read the labels", "Pick the right setting"]
+
 function CafeIdentify({ go }: { go: (page: Page) => void }) {
-  const comparison =
-    "The categories are across the top. The card reader is below the screen."
+  const session = usePointAskSession()
+  const result = session.result
+  const live = session.status !== "idle"
+  // After "Yes", the person says what they want to do before the steps.
+  const [asking, setAsking] = useState(false)
+  const [goalText, setGoalText] = useState("")
+  const [goalError, setGoalError] = useState("")
+  const askRef = useRef<HTMLElement>(null)
+  const voice = useVoiceTyping(goalText, setGoalText)
+  const goalIdeas = (result && GOAL_IDEAS[result.skill_id]) || DEFAULT_GOAL_IDEAS
+  const confirm = () => {
+    if (!live) {
+      go("cafesteps")
+      return
+    }
+    setAsking(true)
+    setTimeout(
+      () => askRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+      50,
+    )
+  }
+  const startSteps = () => {
+    const words = goalText.trim()
+    if (voice.listening) voice.toggle()
+    if (!words) {
+      // The basic steps were loaded with the photo.
+      go("cafesteps")
+      return
+    }
+    if (isSafetyBlocked(words)) {
+      setGoalError(
+        "I don't give steps for stoves, heaters, electrical work or medication. Let's ask someone you trust.",
+      )
+      return
+    }
+    void askStepsFor(words)
+    go("cafesteps")
+  }
+  const unsure = session.status === "ready" && Boolean(result?.unsure_reason)
+  useEffect(() => {
+    if (result?.safety_blocked) go("safety-block")
+  }, [result, go])
+
+  const badge =
+    session.status === "loading"
+      ? "● Checking your photo"
+      : session.status === "error"
+        ? "● Could not check"
+        : unsure
+          ? "● Check first · Not sure"
+          : result
+            ? `● Check first · ${Math.round(result.confidence * 100)}% match`
+            : "● Check first · 96% match"
+  const heading =
+    session.status === "loading"
+      ? "Looking at your photo..."
+      : session.status === "error"
+        ? "I couldn't check this photo right now."
+        : unsure
+          ? "I'm not sure. I won't guess."
+          : result
+            ? result.check_statement
+            : "I think this is a Café Self-Order Touchscreen Kiosk."
+  const question =
+    session.status === "loading"
+      ? "This takes a few seconds."
+      : session.status === "error"
+        ? "Try another photo, or ask someone you trust."
+        : unsure
+          ? (result?.unsure_reason ?? "Try another photo, or ask someone you trust.")
+          : "Does this look right to you?"
+  const same = result ? result.same_as_before : ["Food and drink categories are across the top."]
+  const different = result ? result.different : ["The card reader is below the screen."]
+  const comparison = [...same, ...different].join(" ")
+  const canStart = !live || (session.status === "ready" && !unsure)
+  // A skill they already have, on a different type of item.
+  const knownSkill =
+    session.status === "ready" && !unsure && result
+      ? session.known.find((k) => k.skillId === result.skill_id)
+      : undefined
+  const knownName = knownSkill ? getSkill(knownSkill.skillId)?.name : undefined
+  const words = (v = "") => v.toLowerCase().replace(/[^a-z]+/g, " ").trim()
+  const sameAsBefore =
+    Boolean(knownSkill?.learnedOn && result) &&
+    words(knownSkill?.learnedOn) === words(result?.item_name)
+  const typeLine = sameAsBefore
+    ? "You've used this one before."
+    : `This one is a different type: ${result?.item_name}.`
+  const knownText =
+    knownSkill && knownName && result
+      ? `You already know this: ${knownName}. ${
+          knownSkill.learnedOn && !sameAsBefore
+            ? `You learned it on: ${knownSkill.learnedOn}. `
+            : ""
+        }${typeLine}${different.length > 0 && !sameAsBefore ? " Below is what's different." : ""}`
+      : ""
+
   return (
     <div className="flow-screen cafe-flow">
       <FlowTopBar
@@ -1149,70 +1471,243 @@ function CafeIdentify({ go }: { go: (page: Page) => void }) {
       />
       <main className="flow-main cafe-main">
         <div className="cafe-landmark">
-          <span>● Check first · 96% match</span>
-          <button onClick={() => speak(pageCopy.identify)}>
+          <span>{badge}</span>
+          <button onClick={() => speak(`${heading} ${question}`)}>
             <Icon src={icons.sound} />
             Read to me
           </button>
         </div>
         <figure className="scan-preview">
-          <img src={`${A}/96e44.png`} alt="Scanned café ordering kiosk" />
-          <b>✓ Scanned</b>
+          <img
+            src={session.photoUrl ?? `${A}/96e44.png`}
+            alt={live ? "Your photo" : "Scanned café ordering kiosk"}
+          />
+          <b>{session.status === "loading" ? "Checking..." : "✓ Scanned"}</b>
         </figure>
-        <section className="recognition-card">
+        <section className="recognition-card" aria-live="polite">
           <div>
-            <h1>I think this is a Café Self-Order Touchscreen Kiosk.</h1>
+            <h1>{heading}</h1>
             <button
               className="icon-audio"
-              onClick={() => speak(pageCopy.identify)}
+              onClick={() => speak(`${heading} ${question}`)}
               aria-label="Read recognition aloud"
             >
               <Icon src={icons.sound} />
             </button>
           </div>
-          <p>Does this look right to you?</p>
-          <span className="level-pill">●●○ With AI help</span>
-          <button className="flow-primary" onClick={() => go("cafesteps")}>
-            ✓ Yes, that's right
-          </button>
-          <button className="flow-secondary" onClick={() => go("scan")}>
-            Try again / Retake
-          </button>
+          <p>{question}</p>
+          {!live && <span className="level-pill">●●○ With AI help</span>}
+          {canStart && !asking && (
+            <button className="flow-primary" onClick={confirm}>
+              ✓ Yes, that's right
+            </button>
+          )}
+          {(unsure || session.status === "error") && (
+            <button
+              className="flow-primary"
+              onClick={() => {
+                startAsk({ reason: "unsure", itemName: result?.item_name ?? "" })
+                go("photo-confirmation")
+              }}
+            >
+              Ask someone you trust
+            </button>
+          )}
+          {!asking && (
+            <button className="flow-secondary" onClick={() => go("scan")}>
+              Try again / Retake
+            </button>
+          )}
         </section>
-        <section className="comparison-card">
-          <p className="flow-label">Familiar match</p>
-          <div className="comparison-title">
-            <h2>Comparing to your saved setup</h2>
-            <span>Campus Café</span>
-          </div>
-          <article className="same-block">
-            <h3>✓ Same as familiar ordering</h3>
-            <p>Food and drink categories are across the top.</p>
-          </article>
-          <article className="different-block">
-            <h3>What is different</h3>
-            <p>The card reader is below the screen.</p>
-          </article>
-          <button className="audio-pill" onClick={() => speak(comparison)}>
-            <Icon src={icons.sound} />
-            Read comparison aloud
-          </button>
-        </section>
+        {asking && (
+          <section ref={askRef} className="text-alternative" aria-live="polite">
+            <header>
+              <label htmlFor="point-goal">What do you want to do with it?</label>
+              <button
+                className="icon-audio"
+                onClick={() => speak("What do you want to do with it? Type or say it. Or tap an idea.")}
+                aria-label="Read aloud"
+                style={{ color: "var(--color-brand)" }}
+              >
+                <Icon src={icons.sound} />
+              </button>
+            </header>
+            <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+              <textarea
+                id="point-goal"
+                value={goalText}
+                onChange={(event) => {
+                  setGoalText(event.target.value)
+                  setGoalError("")
+                }}
+                rows={2}
+                maxLength={250}
+                placeholder="For example: wash my bedsheets"
+                style={{ minHeight: 80 }}
+              />
+              <button
+                className={`voice-mic ${voice.listening ? "active" : ""}`}
+                onClick={voice.toggle}
+                aria-pressed={voice.listening}
+                aria-label={voice.listening ? "Stop listening" : "Say it instead"}
+                style={{ width: 64, height: 64, flex: "none" }}
+              >
+                <Flow8Asset group="input" file="1e757.svg" />
+              </button>
+            </div>
+            <small>
+              {voice.listening
+                ? "Listening... tap the microphone to stop."
+                : "Type it, or tap the microphone and say it."}
+            </small>
+            {voice.message && (
+              <p className="guidance-message" role="status">
+                {voice.message}
+              </p>
+            )}
+            <div className="quick-prompts">
+              <h2>Or tap an idea:</h2>
+              <div>
+                {goalIdeas.map((idea) => (
+                  <button
+                    key={idea}
+                    onClick={() => {
+                      setGoalText(idea)
+                      setGoalError("")
+                    }}
+                  >
+                    {idea}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {goalError && (
+              <p className="guidance-message" role="alert">
+                {goalError}
+              </p>
+            )}
+            {goalError ? (
+              <button
+                className="flow-primary"
+                onClick={() => {
+                  startAsk({ reason: "unsure", itemName: result?.item_name ?? "" })
+                  go("photo-confirmation")
+                }}
+              >
+                Ask someone you trust
+              </button>
+            ) : (
+              <button className="flow-primary" onClick={startSteps}>
+                {goalText.trim() ? "Get my steps →" : "Just show me the basics →"}
+              </button>
+            )}
+          </section>
+        )}
+        {knownText && (
+          <section className="comparison-card" aria-live="polite">
+            <p className="flow-label">You already know this</p>
+            <div className="comparison-title">
+              <h2>{knownName}</h2>
+              <button
+                className="icon-audio"
+                onClick={() => speak(knownText)}
+                aria-label="Read aloud"
+              >
+                <Icon src={icons.sound} />
+              </button>
+            </div>
+            <article className="same-block">
+              {knownSkill?.learnedOn && !sameAsBefore && (
+                <p>You learned it on: {knownSkill.learnedOn}</p>
+              )}
+              <p>{typeLine}</p>
+            </article>
+          </section>
+        )}
+        {(same.length > 0 || different.length > 0) && (
+          <section className="comparison-card">
+            <p className="flow-label">Familiar match</p>
+            <div className="comparison-title">
+              <h2>Comparing to your saved setup</h2>
+              <span>{live ? "My Skills" : "Campus Café"}</span>
+            </div>
+            {same.length > 0 && (
+              <article className="same-block">
+                <h3>
+                  {live ? "✓ Same as what you know" : "✓ Same as familiar ordering"}
+                </h3>
+                {same.map((item) => (
+                  <p key={item}>{item}</p>
+                ))}
+              </article>
+            )}
+            {different.length > 0 && (
+              <article className="different-block">
+                <h3>What is different</h3>
+                {different.map((item) => (
+                  <p key={item}>{item}</p>
+                ))}
+              </article>
+            )}
+            <button className="audio-pill" onClick={() => speak(comparison)}>
+              <Icon src={icons.sound} />
+              Read comparison aloud
+            </button>
+          </section>
+        )}
       </main>
-      <nav className="cafe-bottom with-note">
-        <button className="flow-primary" onClick={() => go("cafesteps")}>
-          Start Step-by-Step Guidance →
-        </button>
-        <small>Take your time. Ask for help anytime.</small>
-      </nav>
     </div>
   )
 }
 function CafeSteps({ go }: { go: (page: Page) => void }) {
-  const [paused, setPaused] = useState(false)
   const [hint, setHint] = useState(false)
+  const [photoRatio, setPhotoRatio] = useState(4 / 3)
+  const session = usePointAskSession()
+  const steps = session.result?.steps ?? []
+  const live = steps.length > 0
+  // Identify is back but the steps are still coming (or failed).
+  const waiting = !live && session.status === "ready" && session.stepsStatus === "loading"
+  const failed = !live && session.status === "ready" && session.stepsStatus === "error"
+  const pending = waiting || failed
+  const index = Math.min(session.stepIndex, Math.max(steps.length - 1, 0))
+  const step = steps[index]
+  const total = live ? steps.length : 3
+  const current = live ? index + 1 : 1
+  const dots = Array.from({ length: total }, (_, i) => (i < current ? "●" : "○")).join("")
+  const instruction = waiting
+    ? "Getting your steps ready..."
+    : failed
+      ? "I couldn't get the steps right now."
+      : (step?.action ?? "Tap the Iced Drinks button on the screen.")
+  const where = waiting
+    ? "This takes a few seconds. Take your time."
+    : failed
+      ? "Try another photo, or ask someone you trust."
+      : (step?.where ?? "Touch the cold drinks picture in the top row.")
+  const hintText =
+    step?.hint ?? step?.done_when ?? "Look at the first row. Find the cold drink cup."
+  const askSarah = () => {
+    startAsk({
+      reason: "stuck",
+      itemName: session.result?.item_name ?? "Café Self-Order Touchscreen Kiosk",
+      stepNumber: current,
+      stepText: instruction,
+    })
+    go("photo-confirmation")
+  }
+  const showStep = (next: number) => {
+    setHint(false)
+    setStepIndex(next)
+  }
+  const next = () => {
+    if (live && index < steps.length - 1) {
+      showStep(index + 1)
+      return
+    }
+    go("cafecomplete")
+  }
   return (
-    <div className="flow-screen cafe-flow">
+    <div className="flow-screen cafe-flow steps-screen">
       <FlowTopBar
         title="Step Guidance"
         back={() => go("identify")}
@@ -1220,32 +1715,90 @@ function CafeSteps({ go }: { go: (page: Page) => void }) {
       />
       <main className="flow-main cafe-main">
         <div className="cafe-landmark">
-          <span>● Point & Ask guidance · Self-paced</span>
-          <b>Live AR</b>
+          <span>● One step at a time</span>
         </div>
         <section className="cafe-step-counter">
           <span>
-            <b>Step 1 of 3</b>
-            <small>Choosing your item</small>
+            <b>{pending ? "Step 1" : `Step ${current} of ${total}`}</b>
+            <small>
+              {pending ? "Getting ready" : (step?.step_title ?? "Choosing your item")}
+            </small>
           </span>
-          <em>●○○</em>
+          {!pending && <em>{dots}</em>}
           <p>Take your time. There is no time limit.</p>
         </section>
         <section className="ar-viewfinder">
-          <img src={`${A}/83e74.png`} alt="Close-up of café kiosk menu" />
-          <span className="ar-status">● Camera locked on category button</span>
-          <div className="target-box">
-            <b>Tap “Iced Drinks”</b>
-            <span>Iced Drinks & Teas</span>
-          </div>
-          <small>Screen detects button in view</small>
+          {live || pending ? (
+            // Show the whole photo at its real shape so the highlight lines up.
+            <div
+              style={{
+                position: "relative",
+                height: "100%",
+                maxWidth: "100%",
+                aspectRatio: String(photoRatio),
+                margin: "0 auto",
+              }}
+            >
+              <img
+                src={session.photoUrl ?? ""}
+                alt="Your photo"
+                onLoad={(event) =>
+                  setPhotoRatio(
+                    event.currentTarget.naturalWidth /
+                      event.currentTarget.naturalHeight,
+                  )
+                }
+                style={{ width: "100%", height: "100%", objectFit: "fill" }}
+              />
+              {step?.box && (
+                <div
+                  aria-hidden="true"
+                  style={{
+                    position: "absolute",
+                    left: `${step.box.x * 100}%`,
+                    top: `${step.box.y * 100}%`,
+                    width: `${step.box.w * 100}%`,
+                    height: `${step.box.h * 100}%`,
+                    border: "4px solid var(--color-brand)",
+                    borderRadius: "var(--radius-medium)",
+                    boxShadow: "0 0 0 3px #ffffffcc, 0 0 20px #13332673",
+                  }}
+                />
+              )}
+            </div>
+          ) : (
+            <img
+              src={`${A}/83e74.png`}
+              alt="Close-up of café kiosk menu"
+            />
+          )}
+          <span className="ar-status">
+            {live || pending ? "● Your photo" : "● Example photo"}
+          </span>
+          {!live && !pending && (
+            <div className="target-box">
+              <b>Tap “Iced Drinks”</b>
+              <span>Iced Drinks & Teas</span>
+            </div>
+          )}
+          {live || pending ? (
+            <small
+              style={{ whiteSpace: "normal", width: "90%", textAlign: "center" }}
+            >
+              {pending ? "Your photo" : step?.box ? "Look inside the blue box" : step?.where}
+            </small>
+          ) : (
+            <small>Look inside the blue box</small>
+          )}
         </section>
         <section className="cafe-instruction">
-          <h1>Tap the Iced Drinks button on the screen.</h1>
-          <p>Touch the cold drinks picture in the top row.</p>
+          <h1>{instruction}</h1>
+          <p>{where}</p>
+          {step?.done_when && <p>✓ You'll know it worked: {step.done_when}</p>}
+          {step?.caution && <p>{step.caution}</p>}
           <button
             className="audio-pill"
-            onClick={() => speak(pageCopy.cafesteps)}
+            onClick={() => speak(`${instruction} ${where}`)}
           >
             <Icon src={icons.sound} />
             Read this step aloud
@@ -1253,13 +1806,11 @@ function CafeSteps({ go }: { go: (page: Page) => void }) {
         </section>
         <div className="assist-row">
           <button onClick={() => setHint(!hint)}>Show hint</button>
-          <button onClick={() => speak("You can ask Sarah for help.")}>
-            Not sure
-          </button>
+          <button onClick={askSarah}>Not sure</button>
         </div>
         {hint && (
           <p className="hint-card" role="status">
-            Look at the first row. Find the cold drink cup.
+            {hintText}
           </p>
         )}
         <section className="cafe-coach">
@@ -1268,29 +1819,50 @@ function CafeSteps({ go }: { go: (page: Page) => void }) {
             <b>Sarah</b>
             <small>Family friend in My People</small>
           </span>
-          <button onClick={() => speak("Sarah is ready to help.")}>
-            Ask Sarah
-          </button>
+          <button onClick={askSarah}>Ask Sarah</button>
         </section>
-      </main>
-      {paused && (
-        <div className="pause-notice" role="status">
-          <b>Guidance paused.</b>
-          <span>Continue when ready.</span>
+        <div className="assist-row" style={{ gridTemplateColumns: "1fr" }}>
+          <button onClick={() => go("scan")}>Ask something else</button>
         </div>
-      )}
-      <nav className="cafe-step-actions">
-        <button disabled>← Back</button>
-        <button onClick={() => setPaused(!paused)}>
-          {paused ? "Continue" : "Pause"}
+      </main>
+      <nav className="cafe-step-actions compact">
+        <button disabled={!live || index === 0} onClick={() => showStep(index - 1)}>
+          ← Back
         </button>
-        <button onClick={() => go("cafecomplete")}>Next →</button>
-        <button onClick={() => go("scan")}>Ask something else</button>
+        <button onClick={next} disabled={pending}>
+          Next →
+        </button>
       </nav>
     </div>
   )
 }
 function CafeComplete({ go }: { go: (page: Page) => void }) {
+  const session = usePointAskSession()
+  const result = session.result
+  const skill = result ? getSkill(result.skill_id) : undefined
+  const [savedId, setSavedId] = useState<string | null>(null)
+  const save = () => {
+    if (!result || !skill) return
+    setSavedId(
+      addEntry({
+        skillId: skill.id,
+        level: "with_prompt",
+        place: result.item_name,
+        via: "point_ask",
+        source: "self",
+      }),
+    )
+  }
+  const undo = () => {
+    if (savedId) removeEntry(savedId)
+    setSavedId(null)
+  }
+  const profile = result
+    ? [...result.different, ...result.same_as_before].slice(0, 3)
+    : [
+        "Touchscreen kiosk. Categories are along the top.",
+        "The card reader is at the bottom center.",
+      ]
   return (
     <div className="flow-screen cafe-flow">
       <FlowTopBar
@@ -1300,7 +1872,7 @@ function CafeComplete({ go }: { go: (page: Page) => void }) {
       />
       <main className="flow-main cafe-main">
         <div className="cafe-landmark">
-          <span>Task completed · My Skills updated · Safe storage</span>
+          <span>Task complete</span>
           <button onClick={() => speak(pageCopy.cafecomplete)}>
             <Icon src={icons.sound} />
             Read aloud
@@ -1311,10 +1883,56 @@ function CafeComplete({ go }: { go: (page: Page) => void }) {
             ✓<b>Done</b>
           </span>
           <h1>You did it, Maya!</h1>
-          <p>Café order completed at Uptown Coffee.</p>
-          <small>Gentle celebration · No flashing animations</small>
+          <p>
+            {result
+              ? `You finished every step with the ${result.item_name}.`
+              : "Café order completed at Uptown Coffee."}
+          </p>
         </section>
-        <section className="cafe-passport-update">
+        {result && (
+          <section className="cafe-passport-update" aria-live="polite">
+            <div>
+              <h2>{savedId ? "My Skills Updated" : "Add to My Skills"}</h2>
+              <span>{savedId ? "Saved" : "Check first"}</span>
+            </div>
+            {skill ? (
+              <>
+                <article>
+                  <Icon src={`${A}/71212.svg`} />
+                  <span>
+                    <b>{skill.name}</b>
+                    <p>{helpLabel({ level: "with_prompt", via: "point_ask" })}</p>
+                  </span>
+                </article>
+                <p>
+                  <b>
+                    {session.known.some((k) => k.skillId === skill.id)
+                      ? "New place for a skill you know:"
+                      : "New place:"}
+                  </b>{" "}
+                  {result.item_name}
+                </p>
+                {savedId ? (
+                  <p>
+                    Saved on this phone.{" "}
+                    <button className="audio-pill" onClick={undo}>
+                      Undo
+                    </button>
+                  </p>
+                ) : (
+                  <p>Does this look right? Save it when you are ready.</p>
+                )}
+              </>
+            ) : (
+              <p>
+                I couldn't match this to a skill. You can tell me what you did
+                instead.
+              </p>
+            )}
+          </section>
+        )}
+        {!result && (
+          <section className="cafe-passport-update">
           <div>
             <h2>My Skills Updated</h2>
             <span>Step 2 of 3</span>
@@ -1331,21 +1949,32 @@ function CafeComplete({ go }: { go: (page: Page) => void }) {
           </p>
           <p>One more routine earns the On-My-Own stamp.</p>
         </section>
+        )}
         <section className="kiosk-profile">
-          <h2>Kiosk Profile Stored (Text Only)</h2>
+          <h2>{result ? "Good to remember" : "Kiosk Profile Stored (Text Only)"}</h2>
           <div>
-            <small>Saved details</small>
-            <p>Touchscreen kiosk. Categories are along the top.</p>
-            <p>The card reader is at the bottom center.</p>
+            <small>{result ? "About this one" : "Saved details"}</small>
+            {profile.map((line) => (
+              <p key={line}>{line}</p>
+            ))}
           </div>
-          <p>✓ Photo discarded immediately.</p>
-          <p>Zero images or personal data stored.</p>
+          <p>✓ Your photo was not saved.</p>
         </section>
       </main>
       <nav className="cafe-bottom dual">
-        <button className="flow-primary" onClick={() => go("passport")}>
-          View My Skills →
-        </button>
+        {result && skill && !savedId ? (
+          <button className="flow-primary" onClick={save}>
+            ✓ Save to My Skills
+          </button>
+        ) : result && !skill ? (
+          <button className="flow-primary" onClick={() => go("voice-log")}>
+            Tell me what you did →
+          </button>
+        ) : (
+          <button className="flow-primary" onClick={() => go("passport")}>
+            View My Skills →
+          </button>
+        )}
         <button className="flow-secondary" onClick={() => go("home")}>
           Return to Home
         </button>
@@ -3319,7 +3948,7 @@ function DataBackup({ go }: { go: (page: Page) => void }) {
           <figure>
             <img
               src={`${A}/flow6-backup/eab8c.png`}
-              alt="A portable digital passport on a desk"
+              alt="A portable digital skills record on a desk"
             />
             <figcaption>
               <b>Portable Logs</b>
@@ -3655,8 +4284,40 @@ function Flow7TopBar({
 function Flow7Actions({ children }: { children: React.ReactNode }) {
   return <div className="flow7-actions">{children}</div>
 }
+// What the safety screen says, by the kind of item that was blocked.
+const SAFETY_COPY: Record<
+  SafetyCategory,
+  { intro: string; hazard: string; info: string }
+> = {
+  heat: {
+    intro: "We do not guide stoves, ovens or heaters, for your safety.",
+    hazard: "High heat & burn risk",
+    info: "Stoves, ovens and heaters need a support person present. This rule keeps you safe.",
+  },
+  electrical: {
+    intro: "We do not guide electrical work, for your safety.",
+    hazard: "Electric shock risk",
+    info: "Electrical panels and wiring need a support person present. This rule keeps you safe.",
+  },
+  medication: {
+    intro: "We do not guide medication, for your safety.",
+    hazard: "Taking the wrong dose can hurt you",
+    info: "Check medication with a support person, nurse or pharmacist. This rule keeps you safe.",
+  },
+}
+
 function SafetyBlock({ go }: { go: (page: Page) => void }) {
-  const copy = pageCopy["safety-block"]
+  const session = usePointAskSession()
+  const blocked = session.result?.safety_blocked ? session.result : null
+  const category =
+    (blocked &&
+      (safetyCategory(blocked.appliance) ??
+        safetyCategory(blocked.item_name))) ||
+    "heat"
+  const text = SAFETY_COPY[category]
+  const copy = blocked
+    ? `${blocked.item_name} detected. ${text.intro} A trusted friend or family member can help you in person.`
+    : pageCopy["safety-block"]
   return (
     <div className="flow-screen flow7-screen">
       <Flow7TopBar
@@ -3672,8 +4333,8 @@ function SafetyBlock({ go }: { go: (page: Page) => void }) {
             <Flow7Asset group="block" file="0b19f.svg" />
           </span>
           <span>
-            <b>Safety guardrail</b>
-            <small>Automatic safety rule active</small>
+            <b>Safety first</b>
+            <small>We don't guide this one</small>
           </span>
           <button
             onClick={() => speak(copy)}
@@ -3683,15 +4344,23 @@ function SafetyBlock({ go }: { go: (page: Page) => void }) {
           </button>
         </section>
         <header className="flow7-intro">
-          <h1>Stovetop Burner Detected</h1>
-          <p>We do not guide stoves or heaters for your safety.</p>
+          <h1>
+            {blocked
+              ? `${blocked.item_name} Detected`
+              : "Stovetop Burner Detected"}
+          </h1>
+          <p>{text.intro}</p>
         </header>
         <figure className="flow7-hero safety-photo">
-          <Flow7Asset
-            group="block"
-            file="65988.png"
-            alt="Electric coil stovetop detected by the camera"
-          />
+          {blocked && session.photoUrl ? (
+            <img src={session.photoUrl} alt="Your photo" />
+          ) : (
+            <Flow7Asset
+              group="block"
+              file="65988.png"
+              alt="Electric coil stovetop detected by the camera"
+            />
+          )}
           <figcaption className="blocked-badge">
             <Flow7Asset group="block" file="d132b.svg" />
             Blocked for your safety
@@ -3701,19 +4370,30 @@ function SafetyBlock({ go }: { go: (page: Page) => void }) {
               <Flow7Asset group="block" file="5d004.svg" />
             </span>
             <span>
-              <b>Object: Electric Coil Stovetop</b>
-              <small>Hazard: High heat & burn risk</small>
+              <b>
+                Object: {blocked ? blocked.item_name : "Electric Coil Stovetop"}
+              </b>
+              <small>Hazard: {text.hazard}</small>
             </span>
           </span>
         </figure>
         <aside className="flow7-info">
           <Flow7Asset group="block" file="6e52b.svg" />
-          <p>
-            Stoves, ovens, heaters, and medication need a support person
-            present. This rule keeps you safe.
-          </p>
+<p>{text.info}</p>
         </aside>
         <Flow7Actions>
+          <button
+            className="flow7-primary"
+            onClick={() => {
+              startAsk({
+                reason: "safety",
+                itemName: blocked?.item_name ?? "Electric Coil Stovetop",
+              })
+              go("photo-confirmation")
+            }}
+          >
+            Ask someone you trust
+          </button>
           <button onClick={() => go("point")}>
             <Flow7Asset group="block" file="85b76.svg" />
             Cancel & Return to Camera
@@ -3728,6 +4408,22 @@ function PhotoConfirmation({ go }: { go: (page: Page) => void }) {
   const [consent, setConsent] = useState(false)
   const [photo, setPhoto] = useState<string | null>(null)
   const [error, setError] = useState("")
+  const ask = useAskRequest()
+  const session = usePointAskSession()
+  const shownPhoto = photo ?? (ask ? session.photoUrl : null)
+  const note = !ask
+    ? "I want to warm up pasta safely."
+    : ask.reason === "safety"
+      ? "I want help using this safely."
+      : ask.reason === "stuck"
+        ? "I'm stuck on this step."
+        : "I don't know how to use this."
+  const backTo: Page =
+    ask?.reason === "stuck"
+      ? "cafesteps"
+      : ask?.reason === "unsure"
+        ? "identify"
+        : "safety-block"
   useEffect(
     () => () => {
       if (photo) URL.revokeObjectURL(photo)
@@ -3752,10 +4448,26 @@ function PhotoConfirmation({ go }: { go: (page: Page) => void }) {
   }
   const send = () => {
     if (!consent) return
+    markSent("app")
     if (photo) URL.revokeObjectURL(photo)
     setPhoto(null)
     setConsent(false)
     go("coach-standby")
+  }
+  // Real send for the prototype: the phone's share menu (text, WhatsApp...).
+  const sendByText = async () => {
+    if (!consent || !ask) return
+    try {
+      await shareByText(ask, shownPhoto)
+      markSent("text")
+      setConsent(false)
+      go("coach-standby")
+    } catch (err) {
+      // Closing the share menu is not an error.
+      if ((err as Error)?.name !== "AbortError") {
+        setError("I couldn't open your messages. Try again.")
+      }
+    }
   }
   return (
     <div className="flow-screen flow7-screen">
@@ -3763,7 +4475,7 @@ function PhotoConfirmation({ go }: { go: (page: Page) => void }) {
         group="consent"
         title="Sensory & Regulation Needs"
         copy={pageCopy["photo-confirmation"]}
-        back={() => go("safety-block")}
+        back={() => go(backTo)}
         close={cancel}
       />
       <main className="flow7-main">
@@ -3783,8 +4495,8 @@ function PhotoConfirmation({ go }: { go: (page: Page) => void }) {
         <section className="photo-check-card">
           <div className="photo-check-preview">
             <img
-              src={photo || `${A}/flow7-consent/ea664.png`}
-              alt="Photo of the detected electric stovetop"
+              src={shownPhoto || `${A}/flow7-consent/ea664.png`}
+              alt={ask ? "Your photo" : "Photo of the detected electric stovetop"}
             />
             <span className="safe-photo-badge">
               <Flow7Asset group="consent" file="e72a1.svg" />
@@ -3809,12 +4521,12 @@ function PhotoConfirmation({ go }: { go: (page: Page) => void }) {
               Privacy Protections
             </h2>
             {[
-              ["No faces or personal items detected", "No personal items seen"],
-              ["Photo is sent only to Sarah", "Encrypted direct share"],
               [
-                "Photo is erased immediately after help",
-                "Never stored permanently (R28.2)",
+                "Check your photo first",
+                "Make sure no faces or personal things are in it",
               ],
+              ["Only Sarah will see it", "It is not posted anywhere"],
+              ["Your photo is not saved", "Companion does not keep it"],
             ].map(([title, detail]) => (
               <div key={title}>
                 <span>
@@ -3851,18 +4563,23 @@ function PhotoConfirmation({ go }: { go: (page: Page) => void }) {
           </div>
           <blockquote>
             <b>System Message:</b>
-            “Maya needs in-person help with the stovetop burner at Transition
-            Kitchen.”
+            “
+            {ask
+              ? askMessage(ask)
+              : "Maya needs in-person help with the stovetop burner at Transition Kitchen."}
+            ”
           </blockquote>
           <p className="resident-note">
             <Flow7Asset group="consent" file="5e7a5.svg" />
             <span>
-              <b>Your note:</b> “I want to warm up pasta safely.”
+              <b>Your note:</b> “{note}”
             </span>
           </p>
           <p className="static-eta">
             <Flow7Asset group="consent" file="7f536.svg" />
-            Estimated arrival: within 3 minutes
+            {ask
+              ? "Sarah will get your message right away."
+              : "Estimated arrival: within 3 minutes"}
           </p>
         </section>
         <label className="consent-control">
@@ -3883,6 +4600,11 @@ function PhotoConfirmation({ go }: { go: (page: Page) => void }) {
             Confirm & Send to Sarah
             <Flow7Asset group="consent" file="2ac9b.svg" />
           </button>
+          {ask && (
+            <button disabled={!consent} onClick={sendByText}>
+              Send by text message instead
+            </button>
+          )}
           <button onClick={cancel}>
             <Flow7Asset group="consent" file="15ad5.svg" />
             Keep Photo Private & Cancel
@@ -3895,6 +4617,16 @@ function PhotoConfirmation({ go }: { go: (page: Page) => void }) {
 function CoachStandby({ go }: { go: (page: Page) => void }) {
   const [inhale, setInhale] = useState(true)
   const [callStatus, setCallStatus] = useState("")
+  const ask = useAskRequest()
+  const helping = ask && ask.reason !== "safety"
+  const byText = ask?.sentBy === "text"
+  const reply = !ask
+    ? "Hi Maya! I see your stove photo. Don’t touch the dials yet, I’m walking over right now!"
+    : ask.reason === "safety"
+      ? "Hi Maya! I got your photo. Please don't touch it yet. I'm coming to help."
+      : ask.reason === "stuck"
+        ? "Hi Maya! I can see your photo. Give me a minute and I'll help you with this step."
+        : "Hi Maya! I can see your photo. Let me take a look and tell you what it is."
   return (
     <div className="flow-screen flow7-screen">
       <Flow7TopBar
@@ -3907,16 +4639,18 @@ function CoachStandby({ go }: { go: (page: Page) => void }) {
       <main className="flow7-main">
         <div className="flow7-live">
           <span>
-            <i /> Live support · Sarah notified
+            <i /> {byText ? "Sent by text message" : "Live support · Sarah notified"}
           </span>
           <button onClick={() => speak(pageCopy["coach-standby"])}>
             <Flow7Asset group="standby" file="dc99e.svg" /> Listen
           </button>
         </div>
         <header className="flow7-intro">
-          <h1>Sarah Is On Her Way</h1>
+          <h1>{helping ? "Sarah Got Your Message" : "Sarah Is On Her Way"}</h1>
           <p>
-            Sarah received your photo. Take a seat and relax while you wait.
+            {helping
+              ? "Sarah is looking at your photo. Take a breath while you wait."
+              : "Sarah received your photo. Take a seat and relax while you wait."}
           </p>
         </header>
         <section className="coach-status-card">
@@ -3932,21 +4666,31 @@ function CoachStandby({ go }: { go: (page: Page) => void }) {
             <span>
               <h2>Sarah</h2>
               <b className="active-pill">
-                <i /> Active · Arriving in ~2 min
+                <i /> {helping ? "Active · Replying" : "Active · Arriving in ~2 min"}
               </b>
               <strong>Family Friend · My People</strong>
               <small>
                 <Flow7Asset group="standby" file="1dc61.svg" />
-                Nearby and on the way
+                {helping ? "Reading your message" : "Nearby and on the way"}
               </small>
             </span>
           </header>
           <blockquote>
             <Flow7Asset group="standby" file="48b70.svg" />
             <span>
-              <b>Sarah wrote just now:</b>
-              “Hi Maya! I see your stove photo. Don’t touch the dials yet, I’m
-              walking over right now!”
+              {byText ? (
+                <>
+                  <b>Your text was sent.</b>
+                  Sarah will reply in your messages.
+                </>
+              ) : (
+                <>
+                  <b>Sarah wrote just now:</b>“{reply}”
+                  {ask && (
+                    <small>In this prototype, Sarah's reply is an example.</small>
+                  )}
+                </>
+              )}
             </span>
           </blockquote>
           <p className="route-status">
@@ -3954,7 +4698,7 @@ function CoachStandby({ go }: { go: (page: Page) => void }) {
             <span>
               <i />
               <i />
-              <i /> Assigned & En Route
+              <i /> {helping ? "Message delivered" : "Assigned & En Route"}
             </span>
           </p>
         </section>
@@ -4006,13 +4750,23 @@ function CoachStandby({ go }: { go: (page: Page) => void }) {
           </p>
         </aside>
         <Flow7Actions>
-          <button
-            className="flow7-primary"
-            onClick={() => go("safe-alternatives")}
-          >
-            View Safe Stovetop Alternatives
-            <Flow7Asset group="standby" file="d3302.svg" />
-          </button>
+          {helping ? (
+            <button
+              className="flow7-primary"
+              onClick={() => go(ask?.reason === "stuck" ? "cafesteps" : "scan")}
+            >
+              {ask?.reason === "stuck" ? "Back to my steps" : "Try another photo"}
+              <Flow7Asset group="standby" file="d3302.svg" />
+            </button>
+          ) : (
+            <button
+              className="flow7-primary"
+              onClick={() => go("safe-alternatives")}
+            >
+              View Safe Stovetop Alternatives
+              <Flow7Asset group="standby" file="d3302.svg" />
+            </button>
+          )}
           <button onClick={() => go("home")}>
             <Flow7Asset group="standby" file="fb28f.svg" />
             Cancel Support Request (I’m okay now)
@@ -4268,13 +5022,32 @@ function VoiceLogInput({
   draft: string
   setDraft: (value: string) => void
 }) {
-  const [listening, setListening] = useState(true)
+  // If the sample sentence is still there, voice replaces it instead of adding to it.
+  const { listening, toggle, message } = useVoiceTyping(
+    draft === defaultVoiceDraft ? "" : draft,
+    setDraft,
+  )
+  const [checking, setChecking] = useState(false)
+  const [error, setError] = useState("")
   const wordCount = draft.trim() ? draft.trim().split(/\s+/).length : 0
-  const review = () => {
+  const review = async () => {
     const text = draft.toLowerCase()
     const hazardous = hazardousVoiceTopics.some((topic) => text.includes(topic))
     if (hazardous) {
       go("safety-block")
+      return
+    }
+    if (apiAvailable) {
+      setChecking(true)
+      setError("")
+      try {
+        const outcome = await matchLog(draft)
+        go(outcome === "matched" ? "skill-mapping" : "skill-clarification")
+      } catch {
+        setError("I couldn't check this right now. Please try again.")
+      } finally {
+        setChecking(false)
+      }
       return
     }
     const unclear =
@@ -4306,8 +5079,9 @@ function VoiceLogInput({
         <section className="voice-card" aria-live="polite">
           <button
             className={`voice-mic ${listening ? "active" : ""}`}
-            onClick={() => setListening((value) => !value)}
+            onClick={toggle}
             aria-pressed={listening}
+            aria-label={listening ? "Stop listening" : "Start speaking"}
           >
             <Flow8Asset group="input" file="1e757.svg" />
           </button>
@@ -4321,6 +5095,11 @@ function VoiceLogInput({
             </span>
             {listening ? "Listening to your voice..." : "Voice input paused"}
           </p>
+          {message && (
+            <p className="guidance-message" role="status">
+              {message}
+            </p>
+          )}
           <article className="transcript-tile">
             <header>
               <b>Transcribed Words</b>
@@ -4332,7 +5111,9 @@ function VoiceLogInput({
             <blockquote>“{draft || "Your words will appear here."}”</blockquote>
             <footer>
               <span>{wordCount} words spoken</span>
-              <b>{draft ? "Clear speech detected" : "Waiting for words"}</b>
+              <b>
+                {listening ? "Listening..." : draft ? "Words ready" : "Waiting for words"}
+              </b>
             </footer>
           </article>
         </section>
@@ -4367,18 +5148,25 @@ function VoiceLogInput({
         <aside className="voice-privacy">
           <Flow8Asset group="input" file="f2703.svg" />
           <p>
-            <b>Private on-device voice processing</b>
-            Audio recordings are never saved or sent to any server. Your words
-            stay on your phone.
+            <b>Private voice typing</b>
+            Your phone's voice typing turns your speech into words. Companion
+            never records or saves your audio.
+            {apiAvailable &&
+              " Your words are sent securely to find your skill, and are not stored."}
           </p>
         </aside>
         <Flow8Buttons>
+          {error && (
+            <p className="guidance-message" role="status">
+              {error}
+            </p>
+          )}
           <button
             className="flow8-primary"
             onClick={review}
-            disabled={!draft.trim()}
+            disabled={!draft.trim() || checking}
           >
-            Find My Skill & Review
+            {checking ? "Finding your skill..." : "Find My Skill & Review"}
             <Flow8Asset group="input" file="2ac9b.svg" />
           </button>
           <button onClick={() => go("home")}>Cancel & Return to Home</button>
@@ -4394,7 +5182,15 @@ function SkillMapping({
   go: (page: Page) => void
   draft: string
 }) {
-  const transcript = draft || defaultVoiceDraft
+  const log = useLogSession()
+  const result = log.result
+  const skill = result ? getSkill(result.skill_id) : undefined
+  const live = Boolean(result && skill)
+  const transcript = live ? log.text : draft || defaultVoiceDraft
+  const levelNumber = result ? SUPPORT_LEVELS.indexOf(result.support_level) + 1 : 3
+  const levelLabel = result
+    ? HELP_LABELS[result.support_level]
+    : "By myself"
   return (
     <div className="flow-screen flow8-screen">
       <Flow8TopBar
@@ -4431,10 +5227,14 @@ function SkillMapping({
         </section>
         <section className="matched-skill">
           <header>
-            <span>Mobility · Community transit</span>
+            <span>
+              {skill ? CATEGORY_LABELS[skill.category] : "Mobility · Community transit"}
+            </span>
             <b>
               <i />
-              96% match
+              {result && live
+                ? `${Math.round(result.confidence * 100)}% match`
+                : "96% match"}
             </b>
           </header>
           <div className="matched-title">
@@ -4442,13 +5242,18 @@ function SkillMapping({
               <Flow8Asset group="mapping" file="28637.svg" />
             </span>
             <div>
-              <h2>Light Rail Public Transit</h2>
-              <p>
-                <Flow8Asset group="mapping" file="48aa6.svg" />
-                Central Station → 8th Street
-              </p>
+              <h2>{skill ? skill.name : "Light Rail Public Transit"}</h2>
+              {live ? (
+                <p>{skill?.description}</p>
+              ) : (
+                <p>
+                  <Flow8Asset group="mapping" file="48aa6.svg" />
+                  Central Station → 8th Street
+                </p>
+              )}
             </div>
           </div>
+          {!live && (
           <div className="route-line">
             <span>
               <i />
@@ -4460,25 +5265,32 @@ function SkillMapping({
               8th Street Station
             </span>
           </div>
+          )}
         </section>
         <section className="detected-level">
           <h2>
             <Flow8Asset group="mapping" file="2ee68.svg" />
-            Level 3 Detected: By Myself
+            Level {levelNumber} Detected: {live ? levelLabel : "By Myself"}
           </h2>
           <div>
             <b>Help Level:</b>
             <span>
-              <i />
-              <i />
-              <i /> By myself
+              {Array.from({ length: levelNumber }, (_, i) => (
+                <i key={i} />
+              ))}{" "}
+              {levelLabel}
             </span>
           </div>
-          <p>
-            You stated <b>“all by myself.”</b> We automatically logged full
-            independence with no extra questions needed.
-          </p>
+          {live && result ? (
+            <p>{result.reply}</p>
+          ) : (
+            <p>
+              You stated <b>“all by myself.”</b> We automatically logged full
+              independence with no extra questions needed.
+            </p>
+          )}
         </section>
+        {!live && (
         <aside className="reward-preview">
           <span className="coffee-symbol" aria-hidden="true">
             ☕
@@ -4489,6 +5301,7 @@ function SkillMapping({
             You will unlock your Coffee with Jordan reward goal.
           </p>
         </aside>
+        )}
         <button
           className="change-match"
           onClick={() => go("skill-clarification")}
@@ -4653,6 +5466,20 @@ function SkillClarification({ go }: { go: (page: Page) => void }) {
 function VoiceLogConfirmed({ go }: { go: (page: Page) => void }) {
   const [saved, setSaved] = useState(true)
   const [rewardShown, setRewardShown] = useState(false)
+  const log = useLogSession()
+  const result = log.result
+  const skill = result ? getSkill(result.skill_id) : undefined
+  const live = Boolean(result && skill)
+  const savedId = useRef<string | null>(null)
+  useEffect(() => {
+    if (live && result && saved && !savedId.current) {
+      savedId.current = saveLog(log.text, result)
+    }
+    if (live && !saved && savedId.current) {
+      removeEntry(savedId.current)
+      savedId.current = null
+    }
+  }, [live, log.text, result, saved])
   return (
     <div className="flow-screen flow8-screen confirmed-screen">
       <Flow8TopBar
@@ -4670,6 +5497,8 @@ function VoiceLogConfirmed({ go }: { go: (page: Page) => void }) {
         />
         {saved ? (
           <>
+            {!live && (
+            <>
             <section className="stamp-milestone">
               <span className="milestone-crest">
                 <Flow8Asset group="confirmed" file="47883.svg" />
@@ -4710,6 +5539,8 @@ function VoiceLogConfirmed({ go }: { go: (page: Page) => void }) {
                   : "Show Jordan My Unlocked Reward"}
               </button>
             </section>
+            </>
+            )}
             <section className="saved-entry">
               <header>
                 <b>Saved entry details</b>
@@ -4723,17 +5554,28 @@ function VoiceLogConfirmed({ go }: { go: (page: Page) => void }) {
                   <Flow8Asset group="confirmed" file="053ac.svg" />
                 </span>
                 <p>
-                  <b>Light Rail Public Transit</b>
-                  <small>Central Station to 8th Street</small>
+                  <b>{skill ? skill.name : "Light Rail Public Transit"}</b>
+                  <small>
+                    {live ? `“${log.text}”` : "Central Station to 8th Street"}
+                  </small>
                 </p>
               </div>
               <div className="saved-level">
                 <span>Skill Level:</span>
                 <b>
-                  <i />
-                  <i />
-                  <i />
-                  By myself
+                  {Array.from(
+                    {
+                      length: result
+                        ? SUPPORT_LEVELS.indexOf(result.support_level) + 1
+                        : 3,
+                    },
+                    (_, n) => (
+                      <i key={n} />
+                    ),
+                  )}
+                  {result && live
+                    ? HELP_LABELS[result.support_level]
+                    : "By myself"}
                 </b>
               </div>
               <p>
@@ -4742,7 +5584,7 @@ function VoiceLogConfirmed({ go }: { go: (page: Page) => void }) {
               </p>
               <p>
                 <Flow8Asset group="confirmed" file="63a43.svg" />
-                Today at 3:30 PM
+                {live ? `Today at ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Today at 3:30 PM"}
               </p>
               <aside>
                 <Flow8Asset group="confirmed" file="fb8be.svg" />
